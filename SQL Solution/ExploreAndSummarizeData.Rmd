@@ -1,0 +1,1346 @@
+---
+title: "Exploring Housing Prices"
+author: "Rupa Bisaria"
+date: "September 22, 2017"
+output: 
+  html_document:
+    number_sections: false
+    toc: true
+    theme: cerulean
+    highlight: tango 
+---
+
+This project explores housing data from [Kaggle: Housing Price Competition](https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data). 
+
+```{r lib, setup, include=FALSE, warning=FALSE,message=FALSE}
+library(caret)
+library(corrplot)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(RColorBrewer)
+library(reshape2)
+library(knitr)
+library(kableExtra)
+library(memisc)
+```
+
+```{r settings, include=FALSE}
+col2 <- colorRampPalette(c("#67001F", "#B2182B", "#D6604D", "#F4A582", "#FDDBC7", "#FFFFFF", "#D1E5F0", "#92C5DE", "#4393C3", "#2166AC", "#053061"))
+
+```
+
+# Load the Data
+
+```{r, echo=FALSE}
+# Load Data
+df <- read.csv("train.csv", stringsAsFactors = F)
+# Drop these columns with missing data
+df = df[!names(df) %in% names(df)[sapply(df, function(x)any(is.na(x)))]]
+
+columns = c('Id','SalePrice','MSSubClass','MSZoning','LotArea','Street','LotShape','LandContour','Utilities','LotConfig','LandSlope','Neighborhood','Condition1', 'BldgType',  'OverallQual','YearBuilt',  'YearRemodAdd', 'RoofStyle', 'TotalBsmtSF','GrLivArea','FullBath','HalfBath','BedroomAbvGr',  'KitchenQual', 'TotRmsAbvGrd', 'GarageArea', 'MoSold',  'YrSold', 'SaleType', 'SaleCondition')
+
+df = df[names(df) %in% columns]
+```
+Housing data as downloaded from Kaggle has quite a few missing values. For this project, all such columns have been dropped from the data set. Also, there were 62 variables in the original dataset. Final dataset used for the project has `r dim(df)[1]` observations and `r dim(df)[2]` variables.
+
+```{r, echo=FALSE}
+# remove outlier as suggested by the author the dataset : https://ww2.amstat.org/publications/jse/v19n3/decock.pdf
+df = subset(df, df$GrLivArea < 4000)
+str(df)
+```
+
+Here is a brief description of the variables that has been exlored in the project:
+  
+  *  SalePrice - the property's sale price in dollars.
+  *  MSSubClass: The building class
+  *  MSZoning: The general zoning classification
+  *  LotArea: Lot size in square feet
+  *  Street: Type of road access
+  *  LotShape: General shape of property
+  *  LandContour: Flatness of the property
+  *  Utilities: Type of utilities available
+  *  LotConfig: Lot configuration
+  *  LandSlope: Slope of property
+  *  Neighborhood: Physical locations within Ames city limits
+  *  Condition1: Proximity to main road or railroad
+  *  BldgType: Type of dwelling
+  *  OverallQual: Overall material and finish quality
+  *  YearBuilt: Original construction date
+  *  YearRemodAdd: Remodel date
+  *  RoofStyle: Type of roof
+  *  TotalBsmtSF: Total square feet of basement area
+  *  GrLivArea: Above grade (ground) living area square feet
+  *  FullBath: Full bathrooms above grade
+  *  HalfBath: Half baths above grade
+  *  BedroomAbvGr: Number of bedrooms above basement level
+  *  KitchenQual: Kitchen quality
+  *  TotRmsAbvGrd: Total rooms above grade (does not include bathrooms)
+  *  GarageArea: Size of garage in square feet
+  *  MoSold: Month Sold
+  *  YrSold: Year Sold
+  *  SaleType: Type of sale
+  *  SaleCondition: Condition of sale
+
+```{r, echo=FALSE, plot_functions}
+
+create_hist <- function(data, variable, title, xlab = "", ylab = "",  bins = 10) {
+  return(ggplot(aes(x = variable), data = data) + 
+           geom_histogram(bins = bins, colour="#ffffff", fill = "#377EB8")+
+            ggtitle(title) +
+            xlab(xlab) +
+            ylab(ylab)+
+            theme(plot.title = element_text(hjust = 0.5)))
+}
+
+create_bar <- function(data, x_variable, y_variable, title, xlab = "", ylab = "") {
+  return(ggplot(aes(x = x_variable, y = y_variable), data = data) +     
+    geom_bar(stat="identity", colour="#ffffff", fill = "#377EB8")+
+    ggtitle(title) +
+    xlab(xlab) +
+    ylab(ylab) +
+    theme(plot.title = element_text(hjust = 0.5)))
+}
+
+create_boxplot <- function(data, x_variable, y_variable, title, xlab = "", ylab = "") {
+  return(ggplot(aes(x = x_variable, y = y_variable), data = data) + 
+    geom_boxplot(color = "#377EB8")+
+    ggtitle(title) +
+    xlab(xlab) +
+    ylab(ylab) +
+    theme(plot.title = element_text(hjust = 0.5)))
+}
+
+create_scatterplot <- function(data, x_variable, y_variable, title, xlab = "", ylab = "") {
+  return(ggplot(aes(x=x_variable, y=y_variable), data = data) + 
+    geom_point(shape = 1,color = "#377EB8")+
+    geom_smooth(method=lm, se=FALSE, color = "#F781BF")+
+    ggtitle(title) +
+    xlab(xlab) +
+    ylab(ylab) +
+    theme(plot.title = element_text(hjust = 0.5)))
+}
+
+create_scatterplot_discrete <- function(data, x_variable, y_variable, color_variable, title, xlab = "", ylab = "", legend = "",palette = "RdYlGn") {
+  return(ggplot(aes(x=x_variable, y=y_variable), data = data) + 
+    geom_point(aes(color = color_variable), alpha = 0.8)+
+    ggtitle(title) +
+    xlab(xlab) +
+    ylab(ylab) +
+    scale_color_brewer(name = legend, palette = palette) +
+    theme(plot.title = element_text(hjust = 0.5)))
+}
+
+create_scatterplot_cont <- function(data, x_variable, y_variable, color_variable, title, xlab = "", ylab = "", legend = "", palette = "RdYlGn") {
+  return(ggplot(aes(x=x_variable, y=y_variable), data = data) + 
+    geom_point(aes(color = color_variable), alpha = 0.8)+
+    ggtitle(title) +
+    xlab(xlab) +
+    ylab(ylab) +
+    scale_color_distiller(name = legend, palette = palette) +
+    theme(plot.title = element_text(hjust = 0.5)))
+}
+```
+
+# Univariate Plots 
+
+## Explore general features
+
+### Sale price distribution
+
+```{r, echo=FALSE,warning=FALSE}
+df %>% 
+  with(create_hist(data = ., SalePrice/1000, "Sale Price Distribution", xlab = "Sale Price in Thousand US$", 30))
+```
+
+Since the distribution has slight positive skew, it is log transformed to get a normal distribution.
+
+```{r, echo=FALSE,warning=FALSE}
+df %>% 
+  mutate(SalePrice = log10(SalePrice)) %>% 
+  with(create_hist(data = ., SalePrice, "Normalized Sale Price Distribution", xlab = "Log of Sale Price", 30))
+```
+
+### Sale price under different sale conditions
+
+These are various conditions of sale as per documentation:
+
+   * Normal:	Normal Sale
+   * Abnorml:	Abnormal Sale -  trade, foreclosure, short sale
+   * AdjLand:	Adjoining Land Purchase
+   * Alloca:	Allocation - two linked properties with separate deeds, typically condo with a garage unit	
+   * Family:	Sale between family members
+   * Partial:	Home was not completed when last assessed (associated with New Homes)
+
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(SaleCondition) %>%
+  summarise(Count = n()) %>%
+  mutate(SaleCondition = factor(SaleCondition, levels = unique(SaleCondition)[order(Count, decreasing = TRUE)])) %>%
+  arrange(desc(Count)) %>%
+  with(create_bar(data = ., SaleCondition, Count, "Sale Condition", xlab = "Sale Condition"))
+
+```
+
+```{r, echo=FALSE,warning=FALSE}
+
+df %>% 
+  with(create_hist(data = ., SalePrice/1000, "Sale Price Under Different Sale Condition", xlab="Sale Price in Thousand US$", bins = 50)+
+  coord_cartesian(xlim = c(0,400))+
+  facet_wrap(~SaleCondition, ncol = 2, scales = 'free_y')) 
+```
+
+While most of the sales were under normal conditions, sale of new houses which were partially complete fetched higher price.
+
+
+### Sale price under different sale type
+
+These are various types of sale as per documentation:
+
+   *  WD 	Warranty Deed - Conventional
+   *  CWD	Warranty Deed - Cash
+   *  VWD	Warranty Deed - VA Loan
+   *  New	Home just constructed and sold
+   *  COD	Court Officer Deed/Estate
+   *  Con	Contract 15% Down payment regular terms
+   *  ConLw	Contract Low Down payment and low interest
+   *  ConLI	Contract Low Interest
+   *  ConLD	Contract Low Down
+   *  Oth	Other
+
+
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(SaleType) %>%
+  summarise(Count = n()) %>%
+  mutate(SaleType = factor(SaleType, levels = unique(SaleType)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count)) %>%
+  with(create_bar(data = ., SaleType, Count,"Sale Type", xlab = "Sale Type"))
+
+```
+
+```{r, echo=FALSE,warning=FALSE}
+ggplot(df, aes(SalePrice/1000)) +     
+  geom_histogram(bins = 50, colour="#ffffff", fill = "#377EB8")+
+  ggtitle("Sale Price Under Different Sale Type") +
+  xlab("Sale Price in Thousand US$") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~SaleType, ncol = 2, scales = 'free_y')
+```
+
+Most of the sales were conventional warranty deeds or homes that were just constructed and sold, with new homes sold at higher prices.
+
+### Distribution of sale price for different type of dwellings
+
+Type of dwelling in the data has been defined in the data by two variables:
+		
+BldgType - which is general description of a building,
+
+   * 1Fam:	Single-family Detached	
+   * 2FmCon:	Two-family Conversion; originally built as one-family dwelling
+   * Duplx:	Duplex
+   * TwnhsE:	Townhouse End Unit
+   * TwnhsI:	Townhouse Inside Unit
+   
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(BldgType) %>%
+  summarise(Count = n())%>%
+  mutate(BldgType = factor(BldgType, levels = unique(BldgType)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., BldgType, Count,"Building Type", xlab = "Building Type"))
+```
+
+and MSSubClass that identifies the type of dwelling involved in the sale in more detail:	
+
+  * 20	1-STORY 1946 & NEWER ALL STYLES
+  * 30	1-STORY 1945 & OLDER
+  * 40	1-STORY W/FINISHED ATTIC ALL AGES
+  * 45	1-1/2 STORY - UNFINISHED ALL AGES
+  * 50	1-1/2 STORY FINISHED ALL AGES
+  * 60	2-STORY 1946 & NEWER
+  * 70	2-STORY 1945 & OLDER
+  * 75	2-1/2 STORY ALL AGES
+  * 80	SPLIT OR MULTI-LEVEL
+  * 85	SPLIT FOYER
+  * 90	DUPLEX - ALL STYLES AND AGES
+  * 120	1-STORY PUD (Planned Unit Development) - 1946 & NEWER
+  * 150	1-1/2 STORY PUD - ALL AGES
+  * 160	2-STORY PUD - 1946 & NEWER
+  * 180	PUD - MULTILEVEL - INCL SPLIT LEV/FOYER
+  * 190	2 FAMILY CONVERSION - ALL STYLES AND AGES
+
+   
+```{r,echo=FALSE,warning=FALSE}
+df$MSSubClass <- as.factor(df$MSSubClass)
+
+df %>% 
+  mutate(MSSubClass = plyr::mapvalues(MSSubClass,
+                                from = c("20","30","40","45","50","60","70",
+                                         "75","80","85","90","120","160","180","190"),
+                                to = c("20: 1-STORY 1946 & NEWER ALL STYLES",
+                                       "30: 1-STORY 1945 & OLDER",
+                                       "40: 1-1/2 STORY W/UNFINISHED ATTIC ALL AGES",
+                                       "45: 1-1/2 STORY UNFINISHED ALL AGES",
+                                       "50: 1-1/2 STORY FINISHED ALL AGES",
+                                       "60: 2-STORY 1946 & NEWER",
+                                       "70: 2-STORY 1945 & OLDER",
+                                       "75: 2-1/2 STORY ALL AGES",
+                                       "80: SPLIT OR MULTI-LEVEL",
+                                       "85: SPLIT FOYER",
+                                       "90: DUPLEX - ALL STYLES AND AGES",
+                                       "120: 1-STORY PUD - 1946 & NEWER",
+                                       "160: 2-STORY PUD - 1946 & NEWER",
+                                       "180: PUD - MULTILEVEL - INCL SPLIT LEV/FOYER",
+                                       "190: 2 FAMILY CONVERSION - ALL STYLES AND AGES")) )%>%
+  group_by(MSSubClass) %>%
+  summarise(Count = n())%>%
+  mutate(MSSubClass = factor(MSSubClass, levels = unique(MSSubClass)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., MSSubClass, Count, "MSSubClass", xlab = "Count") + coord_flip())
+
+```
+   
+There are more of single-family detached building type, with most from 1946 or newer, single or double storeyed dwellings.
+
+Density plot of sale price for all five building types
+
+```{r, echo=FALSE,warning=FALSE}
+ggplot(df, aes(x=SalePrice/1000, colour=BldgType)) + 
+  geom_density()+
+  ggtitle("Sale Price Under Different Building Type") +
+  xlab("Sale Price in Thousand US$") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+df %>% 
+  mutate(MSSubClass = plyr::mapvalues(MSSubClass,
+                                from = c("20","30","40","45","50","60","70",
+                                         "75","80","85","90","120","160","180","190"),
+                                to = c("20: 1-STORY 1946 & NEWER ALL STYLES",
+                                       "30: 1-STORY 1945 & OLDER",
+                                       "40: 1-1/2 STORY W/UNFINISHED ATTIC ALL AGES",
+                                       "45: 1-1/2 STORY UNFINISHED ALL AGES",
+                                       "50: 1-1/2 STORY FINISHED ALL AGES",
+                                       "60: 2-STORY 1946 & NEWER",
+                                       "70: 2-STORY 1945 & OLDER",
+                                       "75: 2-1/2 STORY ALL AGES",
+                                       "80: SPLIT OR MULTI-LEVEL",
+                                       "85: SPLIT FOYER",
+                                       "90: DUPLEX - ALL STYLES AND AGES",
+                                       "120: 1-STORY PUD - 1946 & NEWER",
+                                       "160: 2-STORY PUD - 1946 & NEWER",
+                                       "180: PUD - MULTILEVEL - INCL SPLIT LEV/FOYER",
+                                       "190: 2 FAMILY CONVERSION - ALL STYLES AND AGES")) )%>%
+  with(create_boxplot(data = ., MSSubClass, SalePrice/1000, "Sale Price Under Different Building Type", ylab = "Sale Price in Thousand US$")+
+         coord_flip())
+
+```
+
+Houses with seemingly more privacy like Single-family Detached houses and Townhouse End Units fetched higher prices than the others. Also, although duplex houses in general weren't as expensive, newer two storeyed houses were sold at higher price. 
+
+### Sales as per the general zoning classification
+
+MSZoning: Identifies the general zoning classification of the sale.
+		
+     * A	Agriculture
+     * C	Commercial
+     * FV	Floating Village Residential
+     * I	Industrial
+     * RH	Residential High Density
+     * RL	Residential Low Density
+     * RP	Residential Low Density Park 
+     * RM	Residential Medium Density
+
+   
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(MSZoning) %>%
+  summarise(Count = n())%>%
+  mutate(MSZoning = factor(MSZoning, levels = unique(MSZoning)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., MSZoning, Count,"MSZoning", xlab = "Count"))
+
+df %>%
+  mutate(MSZoning = as.factor(MSZoning)) %>%
+  with(create_boxplot(data = ., MSZoning, SalePrice/1000, "Sale Price Vs MSZoning", xlab = "MSZoning", ylab = "Sale Price in Thousand US$")+
+         coord_flip())
+```
+
+Most of the houses are from residential low and medium density zones and houses from residential low density zones were pricier.
+
+### Sale price distribution for overall quality of the dwelling
+
+OverallQual: Rates the overall material and finish of the house
+
+   * 10	Very Excellent
+   * 9	Excellent
+   * 8	Very Good
+   * 7	Good
+   * 6	Above Average
+   * 5	Average
+   * 4	Below Average
+   * 3	Fair
+   * 2	Poor
+   * 1	Very Poor
+   
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(OverallQual) %>%
+  summarise(Count = n())%>%
+  with(create_bar(data = ., as.factor(OverallQual), Count,"Overall Quality", xlab = "Overall Quality"))
+
+df %>%
+  mutate(OverallQual = as.factor(OverallQual)) %>%
+  with(create_boxplot(data = ., OverallQual, SalePrice/1000, "Sale Price Vs Overall Quality", xlab = "Overall Quality", ylab = "Sale Price in Thousand US$") + 
+       coord_flip())
+
+```   
+
+Most of the houses in the dataset are average and better in quality at the time of sale. And as expected, good quality houses have higher sale price.
+
+### Distribution of building age
+
+Age of a building as perceived at the time of sale is taken as difference between year of sale and year of remodelling which has been taken to be same as construction date if no remodeling or additions.
+
+```{r, echo=FALSE,warning=FALSE}
+df$BldgAge = ifelse(df$YrSold >= df$YearRemodAdd, df$YrSold - df$YearRemodAdd, df$YrSold - df$YearBuilt)
+summary(df$BldgAge)
+```
+
+```{r, echo=FALSE,warning=FALSE}
+df %>%
+  with(create_hist(data = ., BldgAge, "Building Age Distribution", xlab="Age in Years", bins = 30))
+```
+
+Most of the properties in the dataset are of age 20 years or lesser. It will be interesting to explore the sale price of a building with respect to it's age.
+
+### Total sales by month
+
+```{r, echo=FALSE,warning=FALSE}
+df %>% 
+  mutate(MoSold = factor(month.abb[MoSold], levels = c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"))) %>% 
+  group_by(MoSold)%>% 
+  summarize(TotalSale = sum(SalePrice))%>% 
+  with(create_bar(data = ., MoSold, TotalSale/1000000,"Total Sale by Month", xlab = "Month of Sale", ylab = "Total Sale in Million US$"))
+
+ggplot(df, aes(SalePrice/1000)) +     
+  geom_histogram(bins = 30, colour="#ffffff", fill = "#377EB8")+
+  ggtitle("Monthly Sale Price Distribution") +
+  xlab("Sale Price in Thousand US$") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(0,400))+
+  facet_wrap(~factor(month.abb[MoSold], levels = c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")), ncol = 3, scales = 'free_y')
+```   
+
+Although there is a variation in total sales for each month of a year, distribution of sale price doesn't vary much across the year.
+
+## Explore property specific features
+
+### Preferred neighbourhood
+
+Let us see if there is any preference for some specific neighbourhoods.
+
+Neighborhood: Physical locations within Ames city limits
+
+   * Blmngtn	Bloomington Heights
+   * Blueste	Bluestem
+   * BrDale	Briardale
+   * BrkSide	Brookside
+   * ClearCr	Clear Creek
+   * CollgCr	College Creek
+   * Crawfor	Crawford
+   * Edwards	Edwards
+   * Gilbert	Gilbert
+   * IDOTRR	Iowa DOT and Rail Road
+   * MeadowV	Meadow Village
+   * Mitchel	Mitchell
+   * Names	North Ames
+   * NoRidge	Northridge
+   * NPkVill	Northpark Villa
+   * NridgHt	Northridge Heights
+   * NWAmes	Northwest Ames
+   * OldTown	Old Town
+   * SWISU	South & West of Iowa State University
+   * Sawyer	Sawyer
+   * SawyerW	Sawyer West
+   * Somerst	Somerset
+   * StoneBr	Stone Brook
+   * Timber	Timberland
+   * Veenker	Veenker
+
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  with(create_boxplot(data = ., Neighborhood, SalePrice/1000, "Sale Price Vs Neighborhood", ylab = "Sale Price in Thousand US$") + 
+       coord_flip())
+
+```
+
+There does seem to be distinct price preference for some neighbourhoods like, Northridge, Northridge Heights and Stone Brook. This preference will be explored later in bivariate and multivariate plots sections.
+
+### Distribution of lot area
+
+Since the distribution of lot size distribution is highly skewed, log transformation of LotArea is done to get normalise the distribution.
+
+```{r, echo=FALSE,warning=FALSE}
+df %>%
+  with(create_hist(data = ., log10(LotArea), "Log Transformed Lot Area Distribution", xlab="Log of LotArea", bins = 50))
+
+```
+
+### General shape of property, contour and slope
+
+LotShape: General shape of property
+
+   * Reg	Regular	
+   * IR1	Slightly irregular
+   * IR2	Moderately Irregular
+   * IR3	Irregular
+   
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(LotShape) %>%
+  summarise(Count = n())%>%
+  mutate(LotShape = factor(LotShape, levels = unique(LotShape)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., LotShape, Count,"LotShape", xlab = "LotShape", ylab = "Count"))
+
+```
+
+LandContour: Flatness of the property
+
+   * Lvl	Near Flat/Level	
+   * Bnk	Banked - Quick and significant rise from street grade to building
+   * HLS	Hillside - Significant slope from side to side
+   * Low	Depression
+   
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(LandContour) %>%
+  summarise(Count = n())%>%
+  mutate(LandContour = factor(LandContour, levels = unique(LandContour)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., LandContour, Count,"LandContour", xlab = "LandContour", ylab = "Count"))
+
+```
+
+LandSlope: Slope of property
+		
+   * Gtl	Gentle slope
+   * Mod	Moderate Slope	
+   * Sev	Severe Slope
+
+```{r,echo=FALSE,warning=FALSE}
+
+df %>% 
+  group_by(LandSlope) %>%
+  summarise(Count = n())%>%
+  mutate(LandSlope = factor(LandSlope, levels = unique(LandSlope)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., LandSlope, Count,"LandSlope", xlab = "LandSlope", ylab = "Count"))
+  
+df %>% 
+  with(create_boxplot(data = ., LotShape, SalePrice/1000, "Sale Price Vs LotShape", xlab = "LotShape", ylab = "Sale Price in Thousand US$") )
+
+```
+
+Most of the properties are regular shaped or slightly irregular, with gentle slope and level contour. Interestingly, moderately irregular plots were sold at higher price.
+
+### Type of utilities available
+
+Utilities: Type of utilities available
+		
+   * AllPub	All public Utilities (E,G,W,& S)	
+   * NoSewr	Electricity, Gas, and Water (Septic Tank)
+   * NoSeWa	Electricity and Gas Only
+   * ELO	Electricity only
+
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(Utilities) %>%
+  summarise(Count = n())%>%
+  mutate(Utilities = factor(Utilities, levels = unique(Utilities)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., Utilities, Count,"Utilities", xlab = "Utilities", ylab = "Count"))
+  
+```
+
+Most of the property have all the utilities available.
+
+### Distribution of Sale Price as per lot configuration
+
+LotConfig: Lot configuration as defined in the dataset
+
+   * Inside:	Inside lot
+   * Corner:	Corner lot
+   * CulDSac:	Cul-de-sac
+   * FR2:	Frontage on 2 sides of property
+   * FR3:	Frontage on 3 sides of property
+   
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(LotConfig) %>%
+  summarise(Count = n())%>%
+  mutate(LotConfig = factor(LotConfig, levels = unique(LotConfig)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., LotConfig, Count,"Lot Configuration", ylab = "Count"))
+ 
+df %>% 
+  with(create_boxplot(data = ., LotConfig, SalePrice/1000, "Sale Price Vs Lot Configuration", xlab = "Lot Configuration", ylab = "Sale Price in Thousand US$") )
+
+```
+
+Most of the lots were either inside or corner lots. Also, houses in cul-de-sacs and the houses with three side frontage are pricier.
+
+### Does access street have any bearing on the house price?
+
+Street: Type of road access to property
+
+   * Grvl:	Gravel	
+   * Pave:	Paved
+   
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(Street) %>%
+  summarise(Count = n())%>%
+  mutate(Street = factor(Street, levels = unique(Street)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., Street, Count,"Street", xlab = "Street", ylab = "Count"))
+
+
+df %>% 
+  with(create_boxplot(data = ., Street, SalePrice/1000, "Sale Price Vs Street", xlab = "Street", ylab = "Sale Price in Thousand US$") )
+
+```
+
+Most of the houses have paved street access and as expected houses with paved access fetch higher price than ones with gravel access.
+
+## Explore structure specific features
+
+### Above grade living area distribution
+
+Ground living area distribution is normalised by log transformation before plotting.
+
+```{r, echo=FALSE,warning=FALSE}
+summary(df$GrLivArea)
+
+df %>% 
+  with(create_hist(data = ., log10(GrLivArea), "Log Transformed Living Area Distribution", xlab="Log of Living Area", bins = 10))
+
+```
+
+### Garage area distribution
+
+Garage area distribution is normalised by log transformation.
+```{r, echo=FALSE,warning=FALSE}
+summary(df$GarageArea)
+
+subset(df, GarageArea>0) %>%
+  with(create_hist(data = ., log10(GarageArea), "Log Transformed Garage Area Distribution", xlab="Log of Garage Area", bins = 10))
+
+```
+
+### Basement area distribution
+
+Basement area distribution is normalised by log transformation.
+```{r, echo=FALSE,warning=FALSE}
+summary(df$TotalBsmtSF)
+
+subset(df, TotalBsmtSF>0)%>%
+  with(create_hist(data = ., log10(TotalBsmtSF), "Log Transformed Basement Area Distribution", xlab="Log of Basement Area", bins = 10))
+
+```
+
+### Sale price distribution by number of rooms in the house
+
+```{r,echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(TotRmsAbvGrd) %>%
+  summarise(Count = n())%>%
+  with(create_bar(data = ., as.factor(TotRmsAbvGrd), Count,"Number of rooms", xlab = "Number of rooms", ylab = "Count"))
+
+
+ggplot(df, aes(SalePrice/1000)) +     
+  geom_histogram(bins = 50, colour="#ffffff", fill = "#377EB8")+
+  ggtitle("Sale Price By Number of Rooms") +
+  xlab("Sale Price in Thousand US$") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(0,400))+
+  #scale_x_continuous(labels=comma)+
+  facet_wrap(~TotRmsAbvGrd, ncol = 2, scales = 'free_y')
+
+ggplot(df, aes(GrLivArea)) +     
+  geom_histogram(bins = 30, colour="#ffffff", fill = "#377EB8")+
+  ggtitle("Ground Living Area By Number of Rooms") +
+  xlab("Ground Living Area in Square Feet") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(labels=comma)+
+  facet_wrap(~TotRmsAbvGrd, ncol = 2, scales = 'free_y')
+```   
+
+More rooms could mean bigger houses hence higher prices.
+
+### Distribution of Sale Price and Ground Living Area For Different Roofing Style
+
+There are different type of roof defined for houses:
+
+   * Flat
+   * Gable	
+   * Gambrel:	Gabrel (Barn)
+   * Hip	
+   * Mansard	
+   * Shed	
+
+```{r, echo=FALSE,warning=FALSE}
+df %>% 
+  group_by(RoofStyle) %>%
+  summarise(Count = n())%>%
+  mutate(RoofStyle = factor(RoofStyle, levels = unique(RoofStyle)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., RoofStyle, Count,"Roof Style", xlab = "Roof Style", ylab = "Count"))
+
+  
+ggplot(df, aes(SalePrice/1000)) +     
+  geom_histogram(binwidth = 20, colour="#ffffff", fill = "#377EB8")+
+  ggtitle("Sale Price for Different Roofing Type") +
+  xlab("Sale Price in Thousand US$") +
+  ylab("Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(labels=comma)+
+  coord_cartesian(xlim = c(0,400))+
+  facet_wrap(~RoofStyle, ncol = 2, scales = 'free_y')
+
+ggplot(df, aes(GrLivArea)) +     
+  geom_histogram(binwidth = 250, colour="#ffffff", fill = "#377EB8")+
+  ggtitle("Ground Living Area for Different Roofing Type") +
+  xlab("Ground Living Area") +
+  ylab("Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(labels=comma)+
+  coord_cartesian(xlim = c(0,5000))+
+  facet_wrap(~RoofStyle, ncol = 2, scales = 'free_y')
+```
+
+Most of the houses had either gabled or hipped roofs, with some of these houses having higher ground living area. Looking at the sale price distribtion, some of the houses with these roofs did fetch higher price too. A combined plot of sale price with groung level area can reveal if higher area did correspond to higher price, which will be explored in the bivariate plots section.
+
+### Sale price as per kitchen quality
+
+KitchenQual: Kitchen quality
+
+   * Ex	Excellent
+   * Gd	Good
+   * TA	Typical/Average
+   * Fa	Fair
+   * Po	Poor
+
+```{r,echo=FALSE,warning=FALSE}
+
+df %>% 
+  group_by(KitchenQual) %>%
+  summarise(Count = n())%>%
+  mutate(KitchenQual = factor(KitchenQual, levels = unique(KitchenQual)[order(Count, decreasing = TRUE)]))%>%
+  arrange(desc(Count))%>%
+  with(create_bar(data = ., KitchenQual, Count,"Kitchen Quality", xlab = "Kitchen Quality", ylab = "Count"))
+
+  
+df %>% 
+  mutate(KitchenQual = factor(KitchenQual, levels = c("Ex","Gd","TA","Fa"))) %>% 
+  with(create_boxplot(data = ., KitchenQual, SalePrice/1000, "Sale Price Vs Kitchen Quality", xlab = "Kitchen Quality", ylab = "Sale Price in Thousand US$") )
+
+```
+
+While most of the houses had average or good kitchen, kitchen in excellent condition did influence the sale price of the house.
+
+### Sale price and bathrooms
+
+```{r,echo=FALSE,warning=FALSE}
+df$bathPerRoom = ifelse(df$FullBath == 0 & df$HalfBath == 0,0,
+                        ifelse(df$BedroomAbvGr == 0,df$FullBath + 0.5 * df$HalfBath, (df$FullBath + 0.5 * df$HalfBath)/df$BedroomAbvGr))
+
+create_scatterplot(data = df, df$bathPerRoom, df$SalePrice/1000, "Sale Price Vs Bathroom to Bedroom Ratio", xlab = "Bathroom to Bedroom Ratio", ylab = "Sale Price in Thousand US$")
+
+```
+
+While bathroom to bedroom ratio does seem to influence the sale price to some extent, too many bathrooms per room don't seem to matter much.
+
+# Univariate Analysis
+
+The tidy housing dataset used for the project has `r dim(df)[1]` observations and `r dim(df)[2] -1` variables.
+
+Main features of interest are in the dataset are:
+
+  * SalePrice
+  * OverAllQual
+  
+Some of the features which might help with investigation of the main features are:
+
+  * BldgAge
+  * SaleCondition
+  * MSSubClass
+  * Neighborhood
+  * LotArea
+  * GrLivArea
+  * TotalBsmtSF
+  * GarageArea
+  * KitchenQual
+  
+  Apart from these, others like number of bathrooms, lot shape and configutaion also seem to have some influence on the sale price. Also, it would be important to explore if any of these features are correlated.
+
+Following new variables very created from existing variables in the dataset:
+
+  * BldgAge: Age of the building
+  
+      A new variable for the age of a property at the time of it's sale was created. If the structure was remodeled at a later date since it's constuction, then the age was taken as `YrSold - YearRemodAdd` else as `YrSold - YearBuilt`.
+      
+  * bathPerRoom: Number of bathrooms per bed room
+  
+      Houses have full baths and half baths as per the dataset. Total number of bathrooms in  house is taken as `FullBath + 0.5 * HalfBath` and the ratio `bathPerRoom` is calculated by dividing the number of bathrooms by number of bedrooms `BedroomAbvGr`.
+  
+Following features had skewed distribution, which has been normalised using log tranformation:
+
+  * SalePrice
+  * LotArea
+  * GrLivArea
+  * GarageArea
+  * TotalBsmtSF
+  
+Normalising a data is imperative before applying any statistical analysis, as most of the statistical tests assume the data to be normally distributed.
+  
+# Bivariate Plots Section
+
+### Correlation between numeric features
+ 
+```{r,echo=FALSE, fig.height=7, fig.width=7}
+corrplot(cor(df[,names(df)[which(lapply(df, class) == "integer")][-1]]), order="hclust", addrect=2, col=col2(50))
+```
+
+While, as expected, OverallQual is very highly correlated with the SalePrice, some features like GrLivArea, GarageArea, TotalBsmtSF also have good correlation with the target variable. Others like YearRemodAdd, YearBuilt can also be good predictor of the SalePrice of the property. Also there are some features which are correlated to each other, such as YearRemodAdd with BldgAge and GrLivArea with TotRmsAbvGrd.
+
+### Explore sale price with respect to the lot area
+
+There is a correlation of `r round(cor(log10(df$LotArea), log10(df$SalePrice)),digits = 2)` between sale price of the house and it's lot area. 
+
+```{r, echo=FALSE,warning=FALSE}
+create_scatterplot(df, log10(df$LotArea), log10(df$SalePrice), "Sale Price Vs Lot Area", xlab = "Log of Lot Area", ylab = "Log of Sale Price")
+
+```
+
+
+### Explore sale price with respect to the ground living area
+
+```{r, echo=FALSE,warning=FALSE}
+create_scatterplot(df, log10(df$GrLivArea), log10(df$SalePrice), "Sale Price Vs Living Area", xlab = "Log of Living Area", ylab = "Log of Sale Price")
+
+```
+
+There is a definite correlation of `r round(cor(log10(df$GrLivArea), log10(df$SalePrice)),2)` between sale price of the house and it's living area.
+
+### Explore sale price with respect to the garage area
+
+```{r, echo=FALSE,warning=FALSE}
+create_scatterplot(subset(df, GarageArea>0), log10(subset(df, GarageArea>0)$GarageArea+1), log10(subset(df, GarageArea>0)$SalePrice), "Sale Price Vs Garage Area", xlab = "Log of Garage Area", ylab = "Log of Sale Price")
+
+```
+
+There is a correlation of `r round(cor(log10(df$GarageArea+1), log10(df$SalePrice)),2)` between sale price of the house and it's garage area.
+
+### Explore sale price with respect to the basement area
+
+```{r, echo=FALSE,warning=FALSE}
+create_scatterplot(subset(df, TotalBsmtSF>0), log10(subset(df, TotalBsmtSF>0)$TotalBsmtSF+1), log10(subset(df, TotalBsmtSF>0)$SalePrice), "Sale Price Vs Basement Area", xlab = "Log of Basement Area", ylab = "Log of Sale Price")
+
+```
+
+There is a correlation of `r round(cor(log10(df$TotalBsmtSF+1), log10(df$SalePrice)),2)` between sale price of the house and it's basement area.
+
+### Overall quality with respect to year of built
+
+```{r, echo=FALSE,warning=FALSE}
+df %>%
+  with(create_boxplot(data = ., factor(OverallQual), YearBuilt, "Overall Quality Vs Year Built", xlab = "Overall Quality", ylab = "Year Built") )
+
+```
+
+There does seem to be a positive correlation between overall quality of the property and the year it was built, with more recent property having better overall quality as compared to older sructures. There were few older houses which were in good condition.
+
+### Overall quality and neighbourhood
+
+```{r, echo=FALSE,warning=FALSE, fig.height=5,fig.width=10}
+df %>%
+  mutate(OverallQual = factor(OverallQual)) %>%
+  group_by(Neighborhood, OverallQual) %>%
+  summarise(Count = n()) %>%
+  mutate(count = sum(Count),
+         prop = Count/sum(Count)) %>%
+  ungroup()%>%
+  ggplot(aes(x = Neighborhood, y = prop, width = count, fill = OverallQual)) +
+    geom_bar(stat = "identity", position = "fill", colour = "black") +
+    #geom_text(aes(label = scales::percent(prop)), position = position_stack(vjust = 0.5)) + # if labels are desired
+    facet_grid(~Neighborhood, scales = "free_x", space = "free_x") +
+    scale_fill_brewer(palette = "RdYlGn") +
+    theme(strip.background = element_blank(),
+          strip.text.x = element_blank(),
+          panel.spacing.x = unit(0, "npc"),# if no spacing preferred between bars
+          axis.text.x  = element_text(angle=90, size=8)) 
+
+```
+
+More percentage of houses in neighbourhoods like Northridge, Northridge Heights, Somerset, Stone Brook and Bloomington Heights were of better quality. Interestingly though, as noticed in univariate analysis, Northridge, Northridge Heights and Stone Brook were pricier than others, inspite of good quality houses in other neighbourhoods.
+
+### What about the distribution of new and old buildings in different neighbourhoods?
+
+Let us consider all buildings older than 20 years as 'Old'.
+
+```{r, echo=FALSE,warning=FALSE}
+df$Age = ifelse(df$BldgAge<20, "New","Old")
+```
+
+```{r, echo=FALSE,warning=FALSE, fig.height=5,fig.width=10}
+df %>%
+  mutate(Age = factor(Age)) %>%
+  group_by(Neighborhood, Age) %>%
+  summarise(Count = n()) %>%
+  mutate(count = sum(Count),
+         prop = Count/sum(Count)) %>%
+  ungroup()%>%
+  ggplot(aes(x = Neighborhood, y = prop, width = count, fill = Age)) +
+    geom_bar(stat = "identity", position = "fill", colour = "black") +
+    #geom_text(aes(label = scales::percent(prop)), position = position_stack(vjust = 0.5)) + # if labels are desired
+    facet_grid(~Neighborhood, scales = "free_x", space = "free_x") +
+    scale_fill_brewer(palette = "RdYlGn") +
+    theme(strip.background = element_blank(),
+          strip.text.x = element_blank(),
+          panel.spacing.x = unit(0, "npc"),# if no spacing preferred between bars
+          axis.text.x  = element_text(angle=90, size=8)) 
+
+```
+
+Northridge, Northridge Heights, Somerset and Bloomington Heights had all new houses, while more than 75% houses in College Creek, Gilbert and Stone Brook were new. 
+
+### Examine neighbourhood affluence and age of the building
+
+It was observed earlier that some of the neighbourhoods had higher priced houses as compared to others. May be some of the neighbourhoods have old houses and people don't prefer them? Let us divide the neighbourhood into three groups, affluent(Level 1) with average sale price above 250,000, not so affluent(Level 2) with average sale price between 250,000 to 150,000 and not affluent(Level 3) with average sale price below 150,000, and take note at the age of the building, at the time of the sale, in each group. 
+
+```{r, echo=FALSE,warning=FALSE}
+Affluence <- df %>% group_by(Neighborhood) %>%
+  summarise(avSalePrice = mean(SalePrice)) %>%
+  mutate(affluence = ifelse(avSalePrice>250000, "Level 1", ifelse(avSalePrice<150000, "Level 3","Level 2")))
+
+Affluence[,c("Neighborhood", "affluence")] %>%
+  kable("html") %>%
+  kable_styling()
+```
+
+```{r, echo=FALSE,warning=FALSE}
+df <- merge(df, Affluence[,c("Neighborhood", "affluence")], by = "Neighborhood")
+df <- df[c(names(df), "BldgAge", "affluence")]
+df <- df[order(df$Id),]
+
+by(df$SalePrice, df$affluence, summary)
+```
+
+```{r, echo=FALSE,warning=FALSE, fig.height=7,fig.width=6}
+df %>% 
+  mutate(Affluence = as.factor(affluence))%>%
+  ggplot(aes(x=BldgAge, y=log10(SalePrice), color = Affluence)) + 
+    geom_point()+
+    ggtitle("Sale Price Vs Building Age By Neighbourhood Affluence") +
+    ylab("Sale Price in Thousand US$") +
+    xlab("Building Age")+
+    theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+Most of the older houses were sold below 200K US$ with a marked dip in sale price for houses beyond 20 years. As expected more affluent neighbourhoods have newer houses as compared to others, although some older houses also did seem to fetch good price. Correlation between sale price and the age of the buiilding is `r round(cor(df$BldgAge, df$SalePrice),2)`.
+
+We can look at the sale price distribution of the new and old buildings separately, with buildings above 20 years of age marked as "Old".
+
+```{r, echo=FALSE,warning=FALSE}
+df %>% 
+  ggplot(aes(x=BldgAge, y=SalePrice)) + 
+    geom_point(color = "#377EB8")+
+    ggtitle("Sale Price Vs Building Age") +
+    ylab("Sale Price in Thousand US$") +
+    xlab("Building Age")+
+    theme(plot.title = element_text(hjust = 0.5))+
+    facet_wrap(~Age, scales = 'free_x')
+```
+
+Correlation of sale price with building age for new buildings is `r round(cor(subset(df, Age == "New")$BldgAge, subset(df, Age == "New")$SalePrice),2)`, while for older buildings it is `r round(cor(subset(df, Age == "Old")$BldgAge, subset(df, Age == "Old")$SalePrice),2)
+`.
+
+Let us check if proximity to certain amenities affect neighbourhoods affluence.
+
+Condition1: Proximity to various conditions
+	
+   * Artery	Adjacent to arterial street
+   * Feedr	Adjacent to feeder street	
+   * Norm	Normal	
+   * RRNn	Within 200' of North-South Railroad
+   * RRAn	Adjacent to North-South Railroad
+   * PosN	Near positive off-site feature--park, greenbelt, etc.
+   * PosA	Adjacent to positive off-site feature
+   * RRNe	Within 200' of East-West Railroad
+   * RRAe	Adjacent to East-West Railroad
+
+Here observationas are grouped by neighbourhood and mean sale price for each proximity condition is plotted.
+
+```{r, echo=FALSE,warning=FALSE}
+by(df$SalePrice, df$Condition1, summary)
+
+df %>% 
+  group_by(affluence, Condition1)%>% 
+  summarize(sp_mean = mean(SalePrice))%>% 
+  ungroup()%>% 
+  arrange(affluence)%>%
+  ggplot(aes(x= Condition1, y = sp_mean, fill = affluence)) +     
+    geom_bar(stat="identity", position=position_dodge(), colour="black")+
+    ggtitle("Mean Sale Price Vs Proximity to Conditions and Neighbourhood Affluence") +
+    ylab("Mean Sale Price for Proximity Condition in US$")+
+    xlab("") +
+    theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+while most of the affluent neighbourhoods had normal proximity to various conditions and people might be willing to pay for the houses there for various other factors, proximity to positive off-site features like park, greenbelt etc did matter to certain extent.
+
+### Did people pay premium for neighbourhood
+
+```{r, echo=FALSE,warning=FALSE, fig.height=7,fig.width=6}
+df %>% 
+  ggplot(aes(x=GrLivArea, y=SalePrice/1000, color = affluence)) + 
+    geom_point(alpha = 0.8)+
+    ggtitle("Sale Price Vs Building Size and Neighbourhood Affluence") +
+    ylab("Sale Price in Thousand US$") +
+    xlab("Living Area in Square Feet")+
+    scale_color_brewer(palette = "YlOrBr") +
+    theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+Indeed, for same size of houses, sale price was higher for more affluent neighbourhood.
+
+### Age of the houses and size & rooms
+
+```{r, echo=FALSE,warning=FALSE, fig.height=7,fig.width=6}
+table(df$Age, df$TotRmsAbvGrd)
+
+df %>%
+  mutate(BedroomAbvGr = factor(BedroomAbvGr))%>%
+  ggplot(aes(x=BldgAge, y=GrLivArea)) + 
+    geom_jitter(aes(color = BedroomAbvGr)) +
+    ggtitle("Living Area Vs Building Age") +
+    ylab("Living Area in Square Feet") +
+    xlab("Age of the Building in Years")+
+    theme(plot.title = element_text(hjust = 0.5))+
+    scale_color_brewer(palette = "RdYlGn") 
+
+```
+
+Many of the bigger houses of all ages did have more rooms, with correlation of `r round(cor(df$BedroomAbvGr, df$GrLivArea),2)`
+
+### Overall quality of bigger homes 
+
+```{r, echo=FALSE,warning=FALSE}
+df %>%
+  with(create_boxplot(data = ., factor(OverallQual), GrLivArea, "Overall Quality Vs Living Area", xlab = "Overall Quality", ylab = "Living Area in Square Feet"))
+
+```
+
+Looks like bigger houses were in better condition too.
+
+### Bigger homes have more bathrooms?
+
+```{r, echo=FALSE,warning=FALSE}
+summary(df$bathPerRoom)
+
+df %>%
+  mutate(baths = bathPerRoom * BedroomAbvGr) %>%
+  with(create_boxplot(data = ., factor(baths), GrLivArea, "Living Area Vs Number of bathrooms", xlab = "Number of bathroom", ylab = "Living Area in Square Feet"))
+```
+
+Correlation between the total number of bathrooms and the living area of a house is `r round(cor(df$bathPerRoom * df$BedroomAbvGr, df$GrLivArea),2)`, which is quite high.
+
+### Older homes have more bathrooms?
+
+```{r, echo=FALSE,warning=FALSE}
+df %>%
+  mutate(baths = bathPerRoom * BedroomAbvGr) %>%
+  with(create_boxplot(data = ., factor(baths), BldgAge, "Building Age Vs Number of bathrooms", xlab = "Number of bathroom", ylab = "Building Age"))
+
+```
+
+Correlation between the total number of bathrooms and the age of a house is `r round(cor(df$bathPerRoom * df$BedroomAbvGr, df$BldgAge),2)`, which is moderate and negative.
+
+```{r, echo=FALSE,warning=FALSE}
+# Convert kitcehnQual to numeric
+df[df$KitchenQual == "Ex",]$KitchenQual = 3
+df[df$KitchenQual == "Gd",]$KitchenQual = 2
+df[df$KitchenQual == "TA",]$KitchenQual = 1
+df[df$KitchenQual == "Fa",]$KitchenQual = 0
+df$KitchenQual = as.numeric(df$KitchenQual)
+```
+
+# Bivariate Analysis
+
+Two main features of the dataset, SalePrice and OverallQual are highly correlated (correlation = `r round(cor(df$SalePrice, df$OverallQual),2)`) with each other. Some of the features have high to moderate correlation with SalePrice, like
+
+  * GrLivArea : `r round(cor(log10(df$GrLivArea), log10(df$SalePrice)),2)`
+  * KitchenQual : `r round(cor(df$KitchenQual, df$SalePrice),2)`
+  * BldgAge : `r round(cor(df$BldgAge, df$SalePrice),2)`
+      Although, correlation with houses older than 20 years was `r round(cor(subset(df, Age == "Old")$BldgAge, subset(df, Age == "Old")$SalePrice),2)` as against `r round(cor(subset(df, Age == "New")$BldgAge, subset(df, Age == "New")$SalePrice),2)` for newer houses.
+   
+As expected, there was a positive correlation between overall quality of the property and the year it was built, with more recent property having better overall quality as compared to older sructures.  Not surprisingly, newer houses were more expensive.
+
+While most of the houses had average or good kitchen, kitchen in excellent condition did influence the sale price of the house. It would be worthwhile to investigate this in terms of older houses fetching good price.
+
+Quite a few expensive properties were near positive off-site feature--park, greenbelt, etc. People paid high premium for such features.
+
+Although mostly old houses were cheaper, some of the houses did fetch good prices. Some of these houses were in the premium neighbourhoods. Also, older houses had fewer bathooms and as expected bigger houses had more bathrooms.
+
+It was very interesting to observe that bigger houses were also in better condition, hence fetched better price too.
+
+There was preference for some neighbourhoods like, Northridge, Northridge Heights and Stone Brook. These neighbourhoods had higer percentage of better quality houses and were expensive. Importantly, while these neighbourhoods with all new houses in good condition had pricier houses, few other neighbourhoods with new houses in good condition didn't get good price. Looks like these are high end neighbourhoods!
+
+There was a very strong relation between SalePrice and overall quality of the house, which seems quite logical. Also, houses with higher ground living area, meaning bigger houses, had higher sale price. Other features like age of the building and quality of kitchen also had good bearing on the sale price of the house.
+
+# Multivariate Plots Section
+
+### Sale price, living area and garage area
+
+```{r,echo=FALSE, fig.height=7,fig.width=6}
+create_scatterplot_cont(df, log10(df$SalePrice), log10(df$GrLivArea), df$GarageArea, 
+                   "Sale Price Vs Living Area and Garage Area", 
+                   xlab = "Log of Living Area", 
+                   ylab = "Log of Sale Price",
+                   legend = "Garage Area")
+```
+
+
+### Sale price, living area and basement area
+
+```{r,echo=FALSE, fig.height=7,fig.width=6}
+create_scatterplot_cont(df, log10(df$SalePrice), log10(df$GrLivArea), df$TotalBsmtSF, 
+                   "Sale Price Vs Living Area and Basement Area", 
+                   xlab = "Log of Living Area", 
+                   ylab = "Log of Sale Price",
+                   legend = "Basement Area")
+
+```
+
+### Sale price, living area and overall quality
+
+```{r,echo=FALSE, fig.height=7,fig.width=6}
+create_scatterplot_discrete(df, log10(df$SalePrice), log10(df$GrLivArea), factor(df$OverallQual), 
+                   "Sale Price Vs Living Area and Overall Quality", 
+                   xlab = "Log of Living Area", 
+                   ylab = "Log of Sale Price",
+                   legend = "Overall Quality")
+```
+
+### Sale price, living area and kitchen quality
+
+Kichen quality is converted to numeric here as follows:
+  * Ex = 3
+  * Gd = 2
+  * TA = 1
+  * Fa = 0
+  
+```{r,echo=FALSE, fig.height=7,fig.width=6}
+create_scatterplot_discrete(df, log10(df$SalePrice), log10(df$GrLivArea), factor(df$KitchenQual), 
+                   "Sale Price Vs Living Area and Kitchen Quality", 
+                   xlab = "Log of Living Area", 
+                   ylab = "Log of Sale Price",
+                   legend = "Kitchen Quality")
+```
+
+### Sale price, living area and neighbourhood
+
+```{r,echo=FALSE, fig.height=7,fig.width=6}
+create_scatterplot_discrete(df, log10(df$SalePrice), log10(df$GrLivArea), factor(df$affluence), 
+                   "Sale Price Vs Living Area and Neighbourhood Affluence", 
+                   xlab = "Log of Living Area", 
+                   ylab = "Log of Sale Price",
+                   legend = "Affluence")
+
+```
+
+### Sale price, living area and building age
+
+Building built or remodelled before 20 years of it's year of sale is taken as 'Old'.
+
+```{r,echo=FALSE, fig.height=7,fig.width=6}
+create_scatterplot_discrete(df, log10(df$SalePrice), log10(df$GrLivArea), factor(df$Age), 
+                   "Sale Price Vs Living Area and Building Age", 
+                   xlab = "Log of Living Area", 
+                   ylab = "Log of Sale Price",
+                   legend = "Building Age")
+
+```
+
+### Sale price, year built and living area
+
+```{r, echo=FALSE,warning=FALSE, fig.height=7,fig.width=6}
+create_scatterplot_cont(df, df$SalePrice/1000, df$YearBuilt, df$GrLivArea, 
+                   "Sale Price Vs Year Built and Living Area", 
+                   xlab = "Sale Price in Thousand US$", 
+                   ylab = "Year Built",
+                   legend = "Living Area",
+                   palette = "YlOrBr")
+
+```
+
+Some of the old houses which was sold on higher price did have bigger living area
+
+### Sale price, year built and kitchen quality
+
+```{r, echo=FALSE,warning=FALSE, fig.height=7,fig.width=6}
+create_scatterplot_cont(df, df$SalePrice/1000, df$YearBuilt, df$KitchenQual, 
+                   "Sale Price Vs Year Built and Kitchen Quality", 
+                   xlab = "Sale Price in Thousand US$", 
+                   ylab = "Year Built",
+                   legend = "Kitchen Quality",
+                   palette = "YlOrBr")
+
+```
+
+Some of the old houses which was sold on higher price did have better quality kitchen.
+
+### Sale price, year built and garage area
+
+```{r,echo=FALSE, fig.height=7,fig.width=6}
+
+create_scatterplot_cont(df, df$SalePrice/1000, df$YearBuilt, df$GarageArea, 
+                   "Sale Price Vs Year Built and Garage Area", 
+                   xlab = "Sale Price in Thousand US$", 
+                   ylab = "Year Built",
+                   legend = "Garage Area",
+                   palette = "RdYlGn")
+
+
+```
+
+Old houses which was sold on higher price had bigger garage.
+
+### Sale price, year built and basement area
+
+```{r,echo=FALSE, fig.height=7,fig.width=6}
+create_scatterplot_cont(df, df$SalePrice/1000, df$YearBuilt, df$TotalBsmtSF, 
+                   "Sale Price Vs Year Built and Basement Area", 
+                   xlab = "Sale Price in Thousand US$", 
+                   ylab = "Year Built",
+                   legend = "Basement Area",
+                   palette = "Paired")
+
+
+```
+
+### Linear regression model
+
+Linear regression model uses log transformed values of SalePrice and GrLivArea.
+```{r,echo=FALSE}
+
+m1 <- lm(I(log10(SalePrice)) ~ OverallQual, data = df)
+m2 <- update(m1,~ . +I(log10(GrLivArea)))
+m3 <- update(m2,~ . +YearBuilt)
+m4 <- update(m3,~ . +Neighborhood)
+m5 <- update(m4,~ . +KitchenQual)
+mtable(m1,m2,m3,m4,m5, sdigits = 3)
+
+```
+
+Variables OverallQual, GrLivArea, YearBuilt, Neighborhood and KitchenQual are able to account for approximately 84.8% of the variance in the sale price of the houses.
+
+# Multivariate Analysis
+
+Size of various features of the property starting from the living area to garage and basement size had positive relation with the sale price of the property. There seemed to be positive correlation between the size of living area, garage and basement too, which reflected in the sale price. Year of built was highly correlated to the sale price and overall condition of the property.
+
+It was intriguing to note that some of the old houses sold at good price. These old houses that had higher sale price were bigger houses with good quality kitchen and bigger garage.
+
+Linear model created using log of sale price with features like overall condition, log of ground living area, neighbourhood, kitchen quality and year built is able to account for approximately 84.8% of the variance in the sale price of the houses. 
+
+This can definitely be improved by looking at other features like SaleCondition, SaleType and LotConfig at more depth. I think inclusion number of bathrooms can also help improving the model, after analysing it's interaction with the living area and age of the building. Also, some of the features which were excluded from the project could help improve the model.
+
+------
+
+# Final Plots and Summary
+
+### Plot One
+```{r, echo=FALSE, Plot_One, fig.height=7,fig.width=6}
+df %>%
+  mutate(OverallQual = as.factor(OverallQual)) %>%
+  ggplot(aes(y=SalePrice/1000, x=OverallQual)) + 
+    geom_boxplot(color = "#377EB8")+
+    coord_flip()+
+    ggtitle("Sale Price Vs Overall Quality") +
+    ylab("Sale Price in Thousand US$") +
+    xlab("Overall Quality")+
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+### Description One
+
+There is a very high correlation between the sale price of the houses and its' overall condition. It makes perfect sense, since no buyer would like to pay higher price for a property in bad shape.
+
+
+### Plot Two
+
+```{r echo=FALSE, Plot_Two, fig.height=7,fig.width=6}
+
+create_scatterplot_discrete(df, log10(df$SalePrice), log10(df$GrLivArea), factor(df$OverallQual), 
+                   "Sale Price Vs Living Area and Overall Quality", 
+                   xlab = "Log of Living Area", 
+                   ylab = "Log of Sale Price",
+                   legend = "Overall Quality")
+```
+
+### Description Two
+
+This plot highlights the strong correlaton between the two features, overall quality and living area, with the main feature, sale price. Interesting to note is the strong correlation between the features overall quality and living area too, with bigger houses having better condition.
+
+
+### Plot Three
+
+```{r echo=FALSE, Plot_Three, fig.height=7,fig.width=6}
+df %>% 
+  mutate(Affluence = as.factor(affluence))%>%
+  ggplot(aes(x=BldgAge, y=SalePrice/1000, color = Affluence)) + 
+    geom_point()+
+    ggtitle("Sale Price Vs Building Age By Neighbourhood Affluence") +
+    ylab("Sale Price in Thousand US$") +
+    xlab("Building Age")+
+    scale_color_brewer(palette = "YlOrRd") +
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+### Description Three
+
+
+I think it was a natural to find this association between higher price for certain neighbourhoods. People paid high premium to be in certain neighbourhood even if the property was older.
+
+------
+
+# Reflection
+
+The Ames Housing dataset used here contains sales within Ames from 2006 to 2010, as described [here](https://ww2.amstat.org/publications/jse/v19n3/decock.pdf) by the author of the data. The dataset has too many variables and for the prupose of this project, I chose to only keep the variables that I felt a potential house buyer would look for before buying a house, like, size of the property, number of rooms, bathrooms, overall condition of the property, location etc.
+
+I also chose to retain sale condition and sale type as I felt it might have some effect on the sale price. Preliminary analysis of the data showed that while most of the sales were under normal conditions, sale of new houses which were partially complete fetched higher price. Also, most of the sales were conventional warranty deeds or homes that were just constructed and sold, with new homes sold at higher prices.
+
+Most of the houses in the dataset are average and better in quality at the time of sale. As I had  expected, good quality houses have higher sale price and the quality of the house is better for newer houses. I went with my preliminary hunch that people would look for overall size of a house, including the quality of the kitchen and number of bathrooms plus maybe even the size of the garage. And indeed, while most of the houses had average or good kitchen, kitchen in excellent condition did influence the sale price of the house. People paid higher price for bigger garage area as well. Interestingly, bigger houses also were in better condition, thereby selling at higher prices.
+
+My intial thought while looking at the neighbourhood and condition1 data, which was about proximity to certain features like green belts, parks etc, that maybe people would prefer neighbourhoods which fulfilled more of these criteria. But most of the observations did not show such preference, although pricy neighbourhoods did have these features.
+
+Another feature that intrigued me was about some old houses fetching better prices in comparision. I looked at this aspect from different prepective, starting from their condition at the time of the sale, the neighbourhood it belonged to, size ofthe house and even number of bathrooms. Finally, it turned out that apart from other things, these houses were indeed in better condition when sold.
+
+Few features that I could have analysed further were number of bathrooms, lot configuration, sale condition and sale type. I could see there was some interaction between number of bathrooms and age of houses. Also, sale price was positively correlated with the number of bathrooms only till certain number. Abnormal sale condition also seemed to influence the sale price. Further, I noticed that plots with frontage open from three sides and the ones in cul-de-sacs had better sale price. These aspecs can be further investgated and maybe included in th model too. 
+
+# References
+
+  * [https://ww2.amstat.org/publications/jse/v19n3/decock.pdf](https://ww2.amstat.org/publications/jse/v19n3/decock.pdf)
+  * [http://www.cookbook-r.com/Graphs/](http://www.cookbook-r.com/Graphs/)
+  * [https://plot.ly/r/reference/](https://plot.ly/r/reference/)
+  * [https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4120293/](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4120293/)
+  * [https://blog.majestic.com/case-studies/correlation-data-transformations/](https://blog.majestic.com/case-studies/correlation-data-transformations/)
+  * [https://stackoverflow.com/questions/19233365/how-to-create-a-marimekko-mosaic-plot-in-ggplot2](https://stackoverflow.com/questions/19233365/how-to-create-a-marimekko-mosaic-plot-in-ggplot2)
+  * [https://stackoverflow.com/questions/29303577/getting-rid-of-facet-grid-labels-on-those-gray-boxes](https://stackoverflow.com/questions/29303577/getting-rid-of-facet-grid-labels-on-those-gray-boxes)
+  * [https://www.r-statistics.com/2014/08/simpler-r-coding-with-pipes-the-present-and-future-of-the-magrittr-package/](https://www.r-statistics.com/2014/08/simpler-r-coding-with-pipes-the-present-and-future-of-the-magrittr-package/)
+  
